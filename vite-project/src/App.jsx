@@ -4,7 +4,7 @@ import "./App.css";
 import vapi from "./vapi";
 import { v4 as uuidv4 } from "uuid";
 
-// ✅ API Configuration
+//  API Configuration
 const RENDER_URL = "https://ai-interview-5-j4xl.onrender.com";
 
 axios.defaults.baseURL = undefined;
@@ -17,7 +17,7 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(request => {
-  console.log('🚀 Request:', request.baseURL + request.url);
+  console.log(' Request:', request.baseURL + request.url);
   return request;
 });
 
@@ -86,7 +86,7 @@ function App() {
     formData.append("resume", file);
     
     try {
-      console.log("📤 Uploading to:", `${RENDER_URL}/resume/upload`);
+      console.log(" Uploading to:", `${RENDER_URL}/resume/upload`);
       
       const res = await api.post("/resume/upload", formData, {
         headers: {
@@ -95,10 +95,10 @@ function App() {
       });
 
       const resumeText = res.data.text;
-      console.log("✅ Resume Parsed:", resumeText);
+      console.log(" Resume Parsed:", resumeText);
 
       sessionIdRef.current = uuidv4();
-      console.log("🆔 Session:", sessionIdRef.current);
+      console.log(" Session:", sessionIdRef.current);
 
       setPreparingInterview(true);
       
@@ -126,9 +126,9 @@ function App() {
                 role: msg.role,
                 text: msg.transcript,
               });
-              console.log("💾 Saved");
+              console.log(" Saved");
             } catch (err) {
-              console.error("❌ Save failed:", err);
+              console.error(" Save failed:", err);
             }
           };
 
@@ -136,14 +136,14 @@ function App() {
           setInterviewStarted(true);
           setPreparingInterview(false);
         } catch (err) {
-          console.error("❌ Failed to start interview:", err);
+          console.error(" Failed to start interview:", err);
           setError("Failed to start interview. Please try again.");
           setPreparingInterview(false);
         }
       }, 2000);
       
     } catch (err) {
-      console.error("❌ Failed:", err);
+      console.error(" Failed:", err);
       setError(`Upload failed: ${err.message}`);
       setUploading(false);
     }
@@ -155,14 +155,14 @@ function App() {
       setError(null);
       
       vapi.stop();
-      console.log("⏹️ Stopped");
+      console.log(" Stopped");
 
       if (messageListenerRef.current) {
         vapi.removeListener("message", messageListenerRef.current);
         messageListenerRef.current = null;
       }
 
-      console.log("📡 Sending feedback request for session:", sessionIdRef.current);
+      console.log(" Sending feedback request for session:", sessionIdRef.current);
       
       const res = await api.post("/feedback/generate", {
         interviewId: sessionIdRef.current,
@@ -175,14 +175,14 @@ function App() {
       } else if (res.data && typeof res.data === 'string') {
         setFeedback(res.data);
       } else {
-        console.error("❌ Unexpected response format:", res.data);
+        console.error(" Unexpected response format:", res.data);
         setError("Unexpected response format from server");
       }
       
       setInterviewStarted(false);
       
     } catch (err) {
-      console.error("❌ Feedback failed:", err);
+      console.error(" Feedback failed:", err);
       setError(err.response?.data?.error || "Failed to generate feedback. Please try again.");
     } finally {
       setLoading(false);
