@@ -2,137 +2,203 @@ import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import "./App.css";
 import vapi from "./vapi";
-import { v4 as uuidv4 } from "uuid";   //  for session tracking
+import { v4 as uuidv4 } from "uuid";
+
+// ✅ API Configuration
+const RENDER_URL = "https://ai-interview-5-j4xl.onrender.com";
+
+axios.defaults.baseURL = undefined;
+axios.defaults.headers.common = {};
+axios.defaults.headers.post = {};
+
+const api = axios.create({
+  baseURL: RENDER_URL,
+  timeout: 30000,
+});
+
+api.interceptors.request.use(request => {
+  console.log('🚀 Request:', request.baseURL + request.url);
+  return request;
+});
+
 function App() {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [startingInterview, setStartingInterview] = useState(false);
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [feedback, setFeedback] = useState(null);
-  const [generatingFeedback, setGeneratingFeedback] = useState(false);
-  // store ONE stable listener reference
-  const messageListenerRef = useRef(null);  //  unique session for each interview
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [preparingInterview, setPreparingInterview] = useState(false);
+  const messageListenerRef = useRef(null);
   const sessionIdRef = useRef(null);
-  // ================= FILE SELECT =================
+  const fileInputRef = useRef(null);
+  
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+  
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+  
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile && (droppedFile.type.includes('pdf') || 
+        droppedFile.type.includes('doc') || 
+        droppedFile.type.includes('docx'))) {
+      setFile(droppedFile);
+      setError(null);
+    } else {
+      setError("Please upload a valid PDF, DOC, or DOCX file");
+    }
+  };
+  
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     setFile(selectedFile);
+    setError(null);
   };
-  // ================= START INTERVIEW =================
+  
   const handleUpload = async () => {
-    if (!file) return alert("Upload resume first");
+    if (!file) {
+      setError("Please upload your resume first");
+      return;
+    }
+    
     setUploading(true);
+    setError(null);
+    
     const formData = new FormData();
     formData.append("resume", file);
+    
     try {
-      // 1️ Upload resume to backend
-      const res = await axios.post(
-        "http://localhost:5001/resume/upload",
-        formData
-      );
+      console.log("📤 Uploading to:", `${RENDER_URL}/resume/upload`);
+      
+      const res = await api.post("/resume/upload", formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        }
+      });
 
       const resumeText = res.data.text;
-      console.log("Resume Parsed:", resumeText);
+      console.log("✅ Resume Parsed:", resumeText);
 
-      //  Generate NEW session ID
       sessionIdRef.current = uuidv4();
-      console.log("Interview Session:", sessionIdRef.current);
+      console.log("🆔 Session:", sessionIdRef.current);
 
-      setUploading(false);
-      setStartingInterview(true);
-
-      // 2️ Start VAPI Interview
-      await vapi.start("9c7fc441-20a6-4bad-80aa-64551caf0799", {
-        variableValues: {
-          resume: resumeText,
-        },
-      });
+      setPreparingInterview(true);
       
-      console.log("Interview Started");
+      // Small delay to show preparing state
+      setTimeout(async () => {
+        try {
+          await vapi.start("9c7fc441-20a6-4bad-80aa-64551caf0799", {
+            variableValues: {
+              resume: resumeText,
+            },
+          });
+          
+          console.log("🎙️ Interview Started");
 
-      // 3️ Prevent duplicate listeners (React StrictMode fix)
+          if (messageListenerRef.current) {
+            vapi.removeListener("message", messageListenerRef.current);
+          }
+
+          messageListenerRef.current = async (msg) => {
+            if (msg.type !== "transcript" || msg.transcriptType !== "final") return;
+
+            try {
+              await api.post("/conversation/save", {
+                interviewId: sessionIdRef.current,
+                role: msg.role,
+                text: msg.transcript,
+              });
+              console.log("💾 Saved");
+            } catch (err) {
+              console.error("❌ Save failed:", err);
+            }
+          };
+
+          vapi.on("message", messageListenerRef.current);
+          setInterviewStarted(true);
+          setPreparingInterview(false);
+        } catch (err) {
+          console.error("❌ Failed to start interview:", err);
+          setError("Failed to start interview. Please try again.");
+          setPreparingInterview(false);
+        }
+      }, 2000);
+      
+    } catch (err) {
+      console.error("❌ Failed:", err);
+      setError(`Upload failed: ${err.message}`);
+      setUploading(false);
+    }
+  };
+  
+  const handleStopInterview = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      vapi.stop();
+      console.log("⏹️ Stopped");
+
       if (messageListenerRef.current) {
         vapi.removeListener("message", messageListenerRef.current);
+        messageListenerRef.current = null;
       }
 
-      // 4️ Listen to interview conversation
-     messageListenerRef.current = async (msg) => {
-  console.log("RAW VAPI MSG:", msg);
+      console.log("📡 Sending feedback request for session:", sessionIdRef.current);
+      
+      const res = await api.post("/feedback/generate", {
+        interviewId: sessionIdRef.current,
+      });
 
-  // Only save FINAL spoken sentence
-  if (msg.type !== "transcript" || msg.transcriptType !== "final") return;
-
-  try {
-    await axios.post("http://localhost:5001/conversation/save", {
-      interviewId: sessionIdRef.current,
-      role: msg.role,
-      text: msg.transcript,
-    });
-
-    console.log("Saved to Firebase ✅");
-  } catch (err) {
-    console.error("Save failed:", err.response?.data || err.message);
-  }
-};
-
-
-      // 5️ Attach listener
-      vapi.on("message", messageListenerRef.current);
-
-      setStartingInterview(false);
-      setInterviewStarted(true);
+      console.log("📊 Feedback Data:", res.data);
+      
+      if (res.data && res.data.feedback) {
+        setFeedback(res.data.feedback);
+      } else if (res.data && typeof res.data === 'string') {
+        setFeedback(res.data);
+      } else {
+        console.error("❌ Unexpected response format:", res.data);
+        setError("Unexpected response format from server");
+      }
+      
+      setInterviewStarted(false);
+      
     } catch (err) {
-      console.error("Interview start failed:", err);
-      setUploading(false);
-      setStartingInterview(false);
-      alert("Failed to start interview. Please try again.");
+      console.error("❌ Feedback failed:", err);
+      setError(err.response?.data?.error || "Failed to generate feedback. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
-
-  // ================= STOP INTERVIEW =================
- const handleStopInterview = async () => {
-  try {
-    vapi.stop();
-    console.log("Interview stopped");
-
-    if (messageListenerRef.current) {
-      vapi.removeListener("message", messageListenerRef.current);
-      messageListenerRef.current = null;
-    }
-
-    setInterviewStarted(false);
-    setGeneratingFeedback(true);
-    setFeedback(null); // Clear previous feedback
-
-    //  CALL BACKEND TO GENERATE FEEDBACK
-    console.log("Generating feedback for:", sessionIdRef.current);
-
-    const res = await axios.post("http://localhost:5001/feedback/generate", {
-      interviewId: sessionIdRef.current,
-    });
-
-    console.log("AI Feedback:", res.data.feedback);
-    setFeedback(res.data.feedback);
-    setGeneratingFeedback(false);
-  } catch (err) {
-    console.error("Feedback generation failed:", err);
-    setGeneratingFeedback(false);
-    alert("Failed to generate feedback. Please try again.");
-  }
-};
-
-  // ================= RESET =================
-  const handleReset = () => {
+  
+  const resetInterview = () => {
     setFile(null);
-    setInterviewStarted(false);
-    setStartingInterview(false);
     setFeedback(null);
-    setGeneratingFeedback(false);
+    setError(null);
     sessionIdRef.current = null;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
-
-
-  // ================= CLEANUP =================
+  
   useEffect(() => {
     return () => {
       if (messageListenerRef.current) {
@@ -141,137 +207,315 @@ function App() {
     };
   }, []);
 
-  // ================= UI =================
+  const renderFeedback = () => {
+    if (!feedback) return null;
+    
+    if (typeof feedback !== 'string') {
+      return <div className="error-message">Invalid feedback format</div>;
+    }
+    
+    const sections = feedback.split('\n\n');
+    
+    return (
+      <div className="feedback-container">
+        {sections.map((section, index) => {
+          if (section.includes('Overall Score:')) {
+            const score = section.split('Overall Score:')[1]?.trim() || 'N/A';
+            return (
+              <div key={index} className="score-section">
+                <h3>Overall Score</h3>
+                <div className="score-badge">{score}</div>
+              </div>
+            );
+          }
+          else if (section.includes('Strengths:')) {
+            return (
+              <div key={index} className="strengths-section">
+                <h3>💪 Strengths</h3>
+                <ul>
+                  {section.split('\n').slice(1).map((item, i) => (
+                    item.trim() && <li key={i}>{item.replace('-', '').trim()}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+          else if (section.includes('Weaknesses:')) {
+            return (
+              <div key={index} className="weaknesses-section">
+                <h3>📉 Areas for Improvement</h3>
+                <ul>
+                  {section.split('\n').slice(1).map((item, i) => (
+                    item.trim() && <li key={i}>{item.replace('-', '').trim()}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+          else if (section.includes('Communication Skills:')) {
+            const text = section.split('Communication Skills:')[1]?.trim() || '';
+            return (
+              <div key={index} className="communication-section">
+                <h3>🗣️ Communication Skills</h3>
+                <p>{text}</p>
+              </div>
+            );
+          }
+          else if (section.includes('Technical Understanding:')) {
+            const text = section.split('Technical Understanding:')[1]?.trim() || '';
+            return (
+              <div key={index} className="technical-section">
+                <h3>💻 Technical Understanding</h3>
+                <p>{text}</p>
+              </div>
+            );
+          }
+          else if (section.includes('Final Recommendation:')) {
+            const recommendation = section.split('Final Recommendation:')[1]?.trim() || '';
+            let recClass = 'recommendation-neutral';
+            if (recommendation.includes('Hire')) recClass = 'recommendation-hire';
+            if (recommendation.includes('No Hire')) recClass = 'recommendation-nohire';
+            
+            return (
+              <div key={index} className={`recommendation-section ${recClass}`}>
+                <h3>🎯 Final Recommendation</h3>
+                <div className="recommendation-badge">{recommendation}</div>
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div className="app-container">
-      <div className="app-content">
-        <header className="app-header">
-          <h1 className="app-title">🎤 AI Mock Interview</h1>
-          <p className="app-subtitle">Practice your interview skills with AI-powered feedback</p>
+    <div className="app">
+      {/* Animated Background */}
+      <div className="gradient-bg">
+        <div className="gradient-1"></div>
+        <div className="gradient-2"></div>
+        <div className="gradient-3"></div>
+      </div>
+
+      {/* Floating Particles */}
+      <div className="particles">
+        <div className="particle"></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+        <div className="particle"></div>
+      </div>
+
+      <div className="content">
+        {/* Header */}
+        <header className="header">
+          <div className="logo">
+            <span className="logo-icon">🎯</span>
+            <h1>Mock<span>Interview</span></h1>
+          </div>
+          <p className="tagline">Practice with AI • Get Instant Feedback • Ace Your Interview</p>
         </header>
 
-        {startingInterview && (
-          <div className="interview-starting">
-            <div className="spinner"></div>
-            <h2>⏳ It will begin soon...</h2>
-            <p>Preparing your interview session</p>
-          </div>
-        )}
-
-        {!interviewStarted && !feedback && !startingInterview && (
-          <div className="upload-section">
-            <div className="file-upload-wrapper">
-              <label htmlFor="resume-upload" className="file-upload-label">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5-5M12 3v12" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span>Upload Your Resume</span>
-                <input
-                  id="resume-upload"
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={handleFileChange}
-                  className="file-input"
-                />
-              </label>
+        {/* Main Content */}
+        <main className="main">
+          {error && (
+            <div className="error-toast">
+              <span>❌ {error}</span>
+              <button onClick={() => setError(null)}>×</button>
             </div>
+          )}
 
-            {file && (
-              <div className="file-selected">
-                <div className="file-info">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M14 2H6a2 2 0 0 0 2v20a2 2 0 0 0 2h12a2 2 0 0 0-2V2z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M14 2v6h6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  <span>{file.name}</span>
+          {!interviewStarted && !feedback && (
+            <div className="upload-container">
+              <div className="upload-card">
+                <div className="upload-icon">📄</div>
+                <h2>Ready to Practice?</h2>
+                <p className="upload-subtitle">Upload your resume and start your mock interview</p>
+                
+                <div 
+                  className={`drop-zone ${isDragging ? 'dragging' : ''} ${file ? 'has-file' : ''}`}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx"
+                    onChange={handleFileChange}
+                    className="hidden-input"
+                  />
+                  
+                  {!file ? (
+                    <>
+                      <div className="cloud-icon">☁️</div>
+                      <div className="drop-text">
+                        <span className="primary-text">Click to upload</span>
+                        <span className="secondary-text">or drag and drop</span>
+                      </div>
+                      <div className="file-types">PDF, DOC, DOCX (Max 10MB)</div>
+                    </>
+                  ) : (
+                    <div className="file-preview">
+                      <div className="file-icon">📎</div>
+                      <div className="file-details">
+                        <div className="file-name">{file.name}</div>
+                        <div className="file-size">{(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                      </div>
+                      <button 
+                        className="remove-file"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFile(null);
+                          if (fileInputRef.current) fileInputRef.current.value = '';
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
+
                 <button 
                   onClick={handleUpload} 
-                  disabled={uploading}
-                  className="btn btn-primary"
+                  disabled={uploading || preparingInterview || !file}
+                  className={`start-button ${(!file || uploading || preparingInterview) ? 'disabled' : ''}`}
                 >
-                  {uploading ? "⏳ Analyzing Resume..." : "🚀 Start Interview"}
+                  {uploading ? (
+                    <>
+                      <span className="spinner"></span>
+                      Analyzing Resume...
+                    </>
+                  ) : preparingInterview ? (
+                    <>
+                      <span className="spinner"></span>
+                      Preparing Interview...
+                    </>
+                  ) : (
+                    <>
+                      <span>🎤</span>
+                      Start Interview
+                    </>
+                  )}
+                </button>
+
+                <div className="feature-list">
+                  <div className="feature-item">
+                    <span>✓</span> AI-powered questions
+                  </div>
+                  <div className="feature-item">
+                    <span>✓</span> Real-time conversation
+                  </div>
+                  <div className="feature-item">
+                    <span>✓</span> Detailed feedback
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {preparingInterview && !interviewStarted && (
+            <div className="preparing-overlay">
+              <div className="preparing-card">
+                <div className="preparing-spinner"></div>
+                <h3>Preparing Your Interview</h3>
+                <p>Analyzing resume and setting up AI interviewer...</p>
+                <div className="preparing-steps">
+                  <div className="step done">📄 Resume analyzed</div>
+                  <div className="step active">🤖 Setting up AI</div>
+                  <div className="step">🎙️ Starting interview</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {interviewStarted && (
+            <div className="interview-container">
+              <div className="interview-card">
+                <div className="interview-header">
+                  <div className="status-badge">
+                    <span className="live-dot"></span>
+                    LIVE INTERVIEW
+                  </div>
+                  <div className="session-info">
+                    Session: {sessionIdRef.current?.slice(0,8)}...
+                  </div>
+                </div>
+                
+                <div className="interview-visual">
+                  <div className="ai-avatar">
+                    <div className="avatar-ring"></div>
+                    <div className="avatar-content">🤖</div>
+                  </div>
+                  
+                  <div className="wave-group">
+                    <div className="wave wave1"></div>
+                    <div className="wave wave2"></div>
+                    <div className="wave wave3"></div>
+                  </div>
+                  
+                  <div className="listening-indicator">
+                    <span>AI is listening</span>
+                    <div className="dots">
+                      <span></span><span></span><span></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="interview-message-box">
+                  <p>AI is asking questions based on your resume. Speak clearly and take your time.</p>
+                </div>
+
+                <button
+                  onClick={handleStopInterview}
+                  disabled={loading}
+                  className="stop-interview-btn"
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-small"></span>
+                      Generating Feedback...
+                    </>
+                  ) : (
+                    <>
+                      <span>⏹️</span>
+                      End Interview & Get Feedback
+                    </>
+                  )}
+                </button>
+
+                <div className="interview-tips">
+                  <h4>💡 Tips</h4>
+                  <ul>
+                    <li>Speak clearly and at a moderate pace</li>
+                    <li>Take your time to think before answering</li>
+                    <li>Provide specific examples from your experience</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {feedback && (
+            <div className="feedback-container-wrapper">
+              <div className="feedback-header">
+                <h2>Your Interview Feedback</h2>
+                <button onClick={resetInterview} className="new-interview-btn">
+                  <span>↻</span>
+                  New Interview
                 </button>
               </div>
-            )}
-          </div>
-        )}
-
-        {interviewStarted && (
-          <div className="interview-section">
-            <div className="interview-status">
-              <div className="pulse-dot"></div>
-              <h2>Interview In Progress 🎙️</h2>
-              <p>The AI interviewer is asking questions based on your resume.</p>
+              
+              {renderFeedback()}
             </div>
-            <button
-              onClick={handleStopInterview}
-              className="btn btn-danger"
-            >
-              ⏹ Stop Interview
-            </button>
-          </div>
-        )}
-
-        {generatingFeedback && (
-          <div className="feedback-loading">
-            <div className="spinner"></div>
-            <h2>Generating Your Feedback Report...</h2>
-            <p>This may take a few moments</p>
-          </div>
-        )}
-
-        {feedback && (
-          <div className="feedback-section">
-            <div className="feedback-header">
-              <h2>📊 Your Interview Feedback Report</h2>
-              <button onClick={handleReset} className="btn btn-secondary">
-                🔄 Start New Interview
-              </button>
-            </div>
-            <div className="feedback-content">
-              <div className="feedback-text">
-                {feedback.split('\n').map((line, idx) => {
-                  const trimmedLine = line.trim();
-                  
-                  if (!trimmedLine) {
-                    return <br key={idx} />;
-                  }
-                  
-                  if (trimmedLine.match(/^Overall Score:/i)) {
-                    return (
-                      <div key={idx} className="score-line">
-                        <strong>{trimmedLine}</strong>
-                      </div>
-                    );
-                  }
-                  
-                  if (trimmedLine.match(/^(Strengths|Weaknesses|Communication Skills|Technical Understanding|Final Recommendation):/i)) {
-                    return (
-                      <h3 key={idx} className="section-title">
-                        {trimmedLine}
-                      </h3>
-                    );
-                  }
-                  
-                  if (trimmedLine.startsWith('-')) {
-                    return (
-                      <div key={idx} className="bullet-point">
-                        {trimmedLine.substring(1).trim()}
-                      </div>
-                    );
-                  }
-                  
-                  return (
-                    <p key={idx}>{trimmedLine}</p>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
+          )}
+        </main>
       </div>
     </div>
   );
 }
+
 export default App;
