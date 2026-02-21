@@ -69,6 +69,13 @@ Create a `.env` file in the `backend` directory:
 GEMINI_API_KEY=your_gemini_api_key
 VAPI_PRIVATE_KEY=your_vapi_private_key
 OPENAI_API_KEY=your_openai_api_key
+FIREBASE_TYPE=service_account
+FIREBASE_PROJECT_ID=your_project_id
+FIREBASE_PRIVATE_KEY_ID=your_private_key_id
+ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_KEY\n-----END PRIVATE KEY-----\n" FIREBASE_CLIENT_EMAIL=your_client_email
+ FIREBASE_CLIENT_ID=your_client_id
+FIREBASE_AUTH_URI=https://accounts.google.com/o/oauth2/auth
+ FIREBASE_TOKEN_URI=https://oauth2.googleapis.com/token
 ```
 
 Add your Firebase service account key as `firebaseKey.json` in the `backend` directory.
