@@ -1,9 +1,9 @@
 import express from "express";
-import { admin } from "../firebase.js";  // Change 1: import { admin } instead of db
+import { admin } from "../firebase.js";
 import { model } from "../gemini.js";
 
 const router = express.Router();
-const db = admin.firestore();  // Change 2: Add this line
+const db = admin.firestore();
 
 // POST /feedback/generate
 router.post("/generate", async (req, res) => {
@@ -69,14 +69,24 @@ ${transcript}
 
         console.log("Feedback Generated:\n", feedback);
 
-        // 🔹 4. Firebase me save karo
-        await db.collection("interviews").doc(interviewId).update({
-            feedback,
-            feedbackGeneratedAt: new Date(),
-        });
+        // 🔹 4. Firebase me save karo - FIXED VERSION
+        // Using set with merge instead of update to avoid document not found error
+        await db
+            .collection("interviews")
+            .doc(interviewId)
+            .set(
+                {
+                    feedback,
+                    feedbackGeneratedAt: new Date(),
+                    updatedAt: new Date(),
+                    status: "completed"
+                },
+                { merge: true } // This creates the document if it doesn't exist
+            );
+
+        console.log(`Feedback saved successfully for interview: ${interviewId}`);
 
         res.json({ feedback });
-
     } catch (err) {
         console.error("Feedback Error:", err);
         res.status(500).json({ error: "Failed to generate feedback" });
