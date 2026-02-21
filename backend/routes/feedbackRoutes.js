@@ -1,8 +1,9 @@
 import express from "express";
-import db from "../firebase.js";
+import { admin } from "../firebase.js";  // Change 1: import { admin } instead of db
 import { model } from "../gemini.js";
 
 const router = express.Router();
+const db = admin.firestore();  // Change 2: Add this line
 
 // POST /feedback/generate
 router.post("/generate", async (req, res) => {
@@ -14,49 +15,24 @@ router.post("/generate", async (req, res) => {
         }
 
         // 🔹 1. Firebase se messages fetch karo
-        let snapshot;
-        try {
-            snapshot = await db
-                .collection("interviews")
-                .doc(interviewId)
-                .collection("messages")
-                .orderBy("createdAt")
-                .get();
-        } catch (orderByError) {
-            // If orderBy fails (no index), try without ordering
-            console.warn("orderBy failed, fetching without order:", orderByError.message);
-            snapshot = await db
-                .collection("interviews")
-                .doc(interviewId)
-                .collection("messages")
-                .get();
-        }
+        const snapshot = await db
+            .collection("interviews")
+            .doc(interviewId)
+            .collection("messages")
+            .orderBy("createdAt")
+            .get();
 
         if (snapshot.empty) {
-            return res.status(404).json({ error: "No messages found for this interview" });
+            return res.status(404).json({ error: "No messages found" });
         }
 
-        // 🔹 2. Transcript banao (sort by createdAt if available)
-        const messages = [];
+        // 🔹 2. Transcript banao
+        let transcript = "";
+
         snapshot.forEach((doc) => {
             const data = doc.data();
-            messages.push({
-                ...data,
-                createdAt: data.createdAt?.toMillis?.() || data.createdAt?.getTime?.() || 0
-            });
+            transcript += `${data.role.toUpperCase()}: ${data.text}\n`;
         });
-
-        // Sort by createdAt if available
-        messages.sort((a, b) => a.createdAt - b.createdAt);
-
-        let transcript = "";
-        messages.forEach((data) => {
-            transcript += `${data.role?.toUpperCase() || "UNKNOWN"}: ${data.text || ""}\n`;
-        });
-
-        if (!transcript.trim()) {
-            return res.status(400).json({ error: "Empty transcript - no valid messages found" });
-        }
 
         console.log("Transcript sent to Gemini:\n", transcript);
 
@@ -93,25 +69,17 @@ ${transcript}
 
         console.log("Feedback Generated:\n", feedback);
 
-        // 🔹 4. Firebase me save karo (use set with merge instead of update)
-        await db.collection("interviews").doc(interviewId).set({
+        // 🔹 4. Firebase me save karo
+        await db.collection("interviews").doc(interviewId).update({
             feedback,
             feedbackGeneratedAt: new Date(),
-        }, { merge: true });
+        });
 
         res.json({ feedback });
 
     } catch (err) {
         console.error("Feedback Error:", err);
-        console.error("Error details:", {
-            message: err.message,
-            stack: err.stack,
-            code: err.code
-        });
-        res.status(500).json({ 
-            error: "Failed to generate feedback",
-            details: err.message 
-        });
+        res.status(500).json({ error: "Failed to generate feedback" });
     }
 });
 
