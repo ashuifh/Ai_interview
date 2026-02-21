@@ -15,6 +15,19 @@ console.log("OPENAI:", process.env.OPENAI_API_KEY ? "OK" : "Missing");
 
 app.use(cors());
 app.use(express.json());
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'AI Interview API is running',
+    endpoints: {
+      resume: '/resume',
+      interview: '/interview',
+      conversation: '/conversation',
+      feedback: '/feedback'
+    }
+  });
+});
+
 // log every request (debug)
 app.use((req, res, next) => {
   console.log("Incoming:", req.method, req.url);
@@ -31,5 +44,5 @@ app.use((err, req, res, next) => {
   res.status(500).send("Something broke!");
 });
 app.listen(5001, () => {
-  console.log("Server running on port 5000");
+  console.log("Server running on port 5001");
 });
