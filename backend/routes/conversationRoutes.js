@@ -1,7 +1,8 @@
 import express from "express";
-import db from "../firebase.js";
+import { admin } from "../firebase.js";  // Yahan change kiya
 
 const router = express.Router();
+const db = admin.firestore();  // Ye line add karo
 
 // SAVE conversation message
 router.post("/save", async (req, res) => {
@@ -12,20 +13,9 @@ router.post("/save", async (req, res) => {
       return res.status(400).json({ error: "Missing data" });
     }
 
-    // Ensure parent interview document exists
-    const interviewRef = db.collection("interviews").doc(interviewId);
-    const interviewDoc = await interviewRef.get();
-    
-    if (!interviewDoc.exists) {
-      // Create interview document if it doesn't exist
-      await interviewRef.set({
-        createdAt: new Date(),
-        status: "in-progress"
-      }, { merge: true });
-    }
-
-    // Save message to subcollection
-    await interviewRef
+    await db
+      .collection("interviews")
+      .doc(interviewId)
       .collection("messages")
       .add({
         role: role || "user",
